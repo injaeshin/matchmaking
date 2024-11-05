@@ -8,7 +8,7 @@ namespace MatchMaking.Data
     {
         private readonly RedLockFactory _redLockFactory;
 
-        private readonly TimeSpan _lockDuration = TimeSpan.FromSeconds(30);
+        private readonly TimeSpan _lockDuration = TimeSpan.FromSeconds(7);
 
         public TimeSpan LockDuration => _lockDuration;
 

@@ -1,6 +1,7 @@
 ﻿using MatchMaking.Common;
 using MatchMaking.Data;
 using MatchMaking.Model;
+
 using System.Diagnostics;
 
 namespace MatchMaking.Match;
@@ -8,15 +9,14 @@ namespace MatchMaking.Match;
 public class MatchService : IDisposable
 {
     private const int _tryMaxCount = 3;
-    private const int _matchTimeout = 60; // seconds
-    private const int _requiredWaitCount = 50;
-    private const int _queueBatchSize = 5;
+    private const int _queueWaitCount = 1000;
+    private const int _queueBatchSize = 10;
 
     private bool _isRunning = false;
     private bool _disposed = false;
 
-
     private readonly RedisService _redisService;
+    private readonly MatchBalancer _matchBalancer;
     private readonly SemaphoreSlim _semaphore = new SemaphoreSlim(1, 1);
 
     private readonly List<Task> _workerTasks = new();
@@ -26,8 +26,11 @@ public class MatchService : IDisposable
     private int _matchCount = 0;
     private Stopwatch _queueStopwatch = new Stopwatch();
 
+    private ConcurrentSet<int> _lockUsers = new();
+
     public MatchService(RedisService redisService)
     {
+        _matchBalancer = new();
         _redisService = redisService;
 
         _workerTasks.Add(Task.Run(() => MatchWoker()));
@@ -98,7 +101,7 @@ public class MatchService : IDisposable
             }
 
             // Single-threaded processing if queue count is below required wait count
-            if (waitingCount <= _requiredWaitCount)
+            if (waitingCount <= _queueWaitCount)
             {
                 await _semaphore.WaitAsync();
                 try
@@ -122,7 +125,7 @@ public class MatchService : IDisposable
             }
 
             // Log time and count when queue is empty
-            if (await _redisService.IsEmptyMatchQueue())
+            if (await _redisService.IsEmptyMatchQueueAsync())
             {
                 _queueStopwatch.Stop();
                 Console.WriteLine($"큐가 비워질 때까지의 시간: {_queueStopwatch.ElapsedMilliseconds} ms");
@@ -138,109 +141,169 @@ public class MatchService : IDisposable
     // Processes matching for a single session
     public async Task<bool> MatchProcess()
     {
-        if (await _redisService.IsEmptyMatchQueue())
+        if (await _redisService.IsEmptyMatchQueueAsync())
         {
             return false;
         }
 
-        var matchOwner = await GetUserQueueAsync();
-        if (matchOwner == null)
+        var user = await GetUserQueueAsync();
+        if (user == null)
         {
             return false;
         }
 
-        if (matchOwner.MMR <= 0)
-        {
-            throw new Exception($"Invalid MMR: {matchOwner.Id} - {matchOwner.MMR}");
-        }
-
-        //if (matchOwner.WaitTime > _matchTimeout)
-        //{
-        //    Console.WriteLine($"waitTime > _matchTimeout: {matchOwner.Id}");
-        //    await DelQueueAndScore(matchOwner.Id);
-        //    return false;
-        //}
-
-        Dictionary<int, MatchQueueItem> matchUsers = new();
-        if (!await TryGetMatchUser(matchOwner, matchUsers))
+        if (!IsValidateMatchOwner(user))
         {
             return false;
         }
 
-        foreach (var user in matchUsers.Values)
+        Dictionary<int, MatchQueueItem> targets = new();
+        if (!await TryGetUserMatchAsync(user, targets))
         {
-            if (!await _redisService.RemoveLock(user.Id))
-            {
-                throw new Exception($"Failed to remove lock: {user.Id}");
-            }
-
-            Interlocked.Increment(ref _matchCount);
+            return false;
         }
 
-        Console.WriteLine($"Match Success: {string.Join(", ", matchUsers.Keys)}");
+        SetMatchedUserAsync(targets);
+
+        Console.WriteLine($"Match Success: {string.Join(", ", targets.Keys)}");
         return true;
     }
 
-    private async Task<bool> TryGetMatchUser(MatchQueueItem matchOwner, Dictionary<int, MatchQueueItem> users)
+    private void SetMatchedUserAsync(Dictionary<int, MatchQueueItem> targets)
+    {
+        foreach (var tg in targets.Values)
+        {
+            if (!_lockUsers.Remove(tg.Id))
+            {
+                throw new InvalidOperationException("Failed to remove lock user");
+            }
+
+            //if (!await _redisService.RemoveLock(tg.Id))
+            //{
+            //    throw new Exception($"Failed to remove lock: {tg.Id}");
+            //}
+
+            _matchBalancer.AddMatchTime(tg.WaitTime);
+
+            Interlocked.Increment(ref _matchCount);
+        }
+    }
+
+    private async Task<int> SelectUnlockUserAsync(List<MatchQueueItem> candidates, Dictionary<int, MatchQueueItem> targets)
+    {
+        foreach (var tg in candidates)
+        {
+            if (targets.ContainsKey(tg.Id))
+            {
+                continue;
+            }
+
+            if (!_lockUsers.Add(tg.Id))
+            {
+                continue;
+            }
+
+            //if (!await _redisService.AddLock(tg.Id))
+            //{
+            //    Console.WriteLine($"Failed to add lock: {tg.Id}");
+            //    continue;
+            //}
+
+            var matchQueueScore = await _redisService.GetUserScoreMatchQueue(tg.Id);
+            if (matchQueueScore == 0)
+            {
+                throw new Exception($"Invalid Match Queue Score: {tg.Id}");
+            }
+
+            await _redisService.RemoveQueueAndScore(tg.Id);
+
+            tg.SetDecodeScore(matchQueueScore);
+            targets.Add(tg.Id, tg);
+        }
+
+        return targets.Count;
+    }
+
+    private bool IsValidateMatchOwner(MatchQueueItem user)
+    {
+        if (user.MMR <= 0)
+        {
+            throw new Exception($"Invalid MMR: {user.Id} - {user.MMR}");
+        }
+
+        //if (user.WaitTime > MatchBalancer.RequestTimeout)
+        //{
+        //    Console.WriteLine($"Request Timeout: {user.Id} - {user.WaitTime}");
+        //    //if (!await _redisService.RemoveLock(user.Id))
+        //    //{
+        //    //    throw new Exception($"Failed to remove lock: {user.Id}");
+        //    //}
+
+        //    return false;
+        //}
+
+        return true;
+    }
+
+    private async Task<bool> TryGetUserMatchAsync(MatchQueueItem user, Dictionary<int, MatchQueueItem> targets)
     {
         var maxCount = (int)MatchMode.FiveVsFive;
-        users.Add(matchOwner.Id, matchOwner);
        
         var tryCount = 1;
-        var adjustScore = Score.GetAdjustScore(matchOwner.MMR, matchOwner.WaitTime);
+        var adjustMMR = _matchBalancer.GetAdjustMMR(user.WaitTime);
 
         do
         {
-            if (users.Count == maxCount)
-            {
-                break;
-            }
+            var minScore = Math.Max(0, (user.MMR - adjustMMR) * tryCount);
+            var maxScore = Math.Min(9999, (user.MMR + adjustMMR) * tryCount);
 
-            var minScore = Math.Max(0, (matchOwner.MMR - adjustScore) * tryCount);
-            var maxScore = Math.Min(9999, (matchOwner.MMR + adjustScore) * tryCount);
-
-            var candidates = await _redisService.GetMatchCandidates(minScore, maxScore, maxCount - users.Count);
+            var count = maxCount - targets.Count - 1;
+            var candidates = await _redisService.GetMatchCandidates(minScore, maxScore, count);
             if (candidates == null || candidates.Count == 0)
             {
                 break;
             }
 
-            foreach (var usr in candidates)
+            if (await SelectUnlockUserAsync(candidates, targets) == maxCount -1)
             {
-                if (users.ContainsKey(usr.Id) || await _redisService.IsLock(usr.Id))
-                {
-                    continue;
-                }
-
-                if (await _redisService.AddLockAndRemoveQueue(usr.Id))
-                {
-                    usr.SetDecodeScore(await _redisService.GetUserScoreMatchQueue(usr.Id));
-                    users.Add(usr.Id, usr);
-                }
+                break;
             }
         } while (++tryCount < _tryMaxCount);
 
+        targets.Add(user.Id, user);
+
         // Re-add unmatched users to the queue if not enough users were found
-        if (users.Count != maxCount)
+        if (targets.Count != maxCount)
         {
-            foreach (var user in users.Values)
+            foreach (var tg in targets.Values)
             {
-                if (!await _redisService.RemoveLockAndAddQueue(user))
+                await _redisService.AddQueueAndScore(tg);
+
+                //if (!await _redisService.RemoveLock(tg.Id))
+                //{
+                //    throw new Exception($"Failed to remove lock: {tg.Id}");
+                //}
+
+                if (!_lockUsers.Remove(tg.Id))
                 {
-                    throw new Exception($"Failed to add lock: {user.Id}");
+                    throw new Exception($"Failed to remove user lock: {tg.Id}");
                 }
             }
 
-            users.Clear();
+            targets.Clear();
             return false;
         }
 
-        return true;
+        return targets.Count == maxCount;
     }
 
-    public async Task<bool> AddMatchQueue(MatchQueueItem user)
+    public async Task<bool> AddMatchQueueAsync(MatchQueueItem user)
     {
         user.SetScore(Score.EncodeScore(user.MMR));
+        if (user.MMR == 0)
+        {
+            throw new Exception($"Invalid MMR: {user.Id} - {user.MMR}");
+        }
 
         if (!await _redisService.AddMatchQueue(user))
         {
@@ -273,11 +336,23 @@ public class MatchService : IDisposable
             foreach (var candidate in candidates)
             {
                 var id = (int)candidate.Id;
-                if (await _redisService.AddLockAndRemoveQueue(id))
+
+                if (!_lockUsers.Add(id))
                 {
-                    var matchOwner = new MatchQueueItem(id, 0, (long)candidate.Score);
-                    return matchOwner;
+                    continue;
                 }
+
+                //if (!await _redisService.AddLock(id))
+                //{
+                //    Console.WriteLine($"Failed to add lock: {id}");
+                //}
+
+                if (!await _redisService.RemoveQueueAndScore(id))
+                {
+                    Console.WriteLine($"Failed to remove queue and score: {id}");
+                }
+
+                return new MatchQueueItem(id, 0, (long)candidate.Score);
             }
 
             begin += _queueBatchSize;

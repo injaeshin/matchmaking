@@ -23,16 +23,50 @@ namespace MatchMaking.Data
             _redisLock = new RedisLock();
         }
 
+        #region Lock
+        //public async Task<bool> AddLock(int id)
+        //{
+        //    string script = @"
+        //        if redis.call('exists', KEYS[1]) == 0 then
+        //            return redis.call('set', KEYS[1], ARGV[1], 'PX', ARGV[2])
+        //        else
+        //            return 0
+        //        end";
+
+        //    var isLockAcquired = (await _db.ScriptEvaluateAsync(script,
+        //                                    new RedisKey[] { RedisKeys.MatchLock(id) },
+        //                                    new RedisValue[] { RedisKeys.LockValue, _redisLock.LockDuration.TotalMilliseconds }))?.ToString() == "OK";
+        //    return isLockAcquired;
+        //}
+
+        //public async Task<bool> RemoveLock(int id)
+        //{
+        //    string script = @"
+        //        if redis.call('exists', KEYS[1]) == 1 then
+        //            return redis.call('del', KEYS[1])
+        //        else
+        //            return 0
+        //        end";
+
+        //    return (int)await _db.ScriptEvaluateAsync(script, new RedisKey[] { RedisKeys.MatchLock(id) }) == 1;
+        //}
+
+        //public async Task<bool> IsLock(int id)
+        //{
+        //    var ret = await _db.StringGetAsync(RedisKeys.MatchLock(id));
+        //    return (ret.IsNullOrEmpty) ? false : true;
+        //}
+
+        #endregion
+
         #region Match Queue
 
         public async Task<long> GetMatchQueueCount() =>
             await _db.SortedSetLengthAsync(RedisKeys.MatchQueueKey);
 
-        public async Task<bool> IsEmptyMatchQueue() => await _db.SortedSetLengthAsync(RedisKeys.MatchQueueKey) == 0;
+        public async Task<bool> IsEmptyMatchQueueAsync() => await _db.SortedSetLengthAsync(RedisKeys.MatchQueueKey) == 0;
 
-        public async Task<bool> AddMatchQueue(MatchQueueItem item) =>
-            await _db.SortedSetAddAsync(RedisKeys.MatchQueueKey, item.Id, item.Score);
-
+        public async Task<bool> AddMatchQueue(MatchQueueItem item) => await _db.SortedSetAddAsync(RedisKeys.MatchQueueKey, item.Id, item.Score);
 
         public async Task<List<MatchQueueItem>?> GetUserMatchQueue(int begin, int end)
         {
@@ -70,37 +104,10 @@ namespace MatchMaking.Data
 
         #endregion
 
-        #region Lock and Queue Management
+        #region Queue Management
 
-        public async Task<bool> AddLock(int id)
+        public async Task<bool> RemoveQueueAndScore(int id)
         {
-            string script = @"
-                if redis.call('exists', KEYS[1]) == 0 then
-                    return redis.call('set', KEYS[1], ARGV[1], 'EX', ARGV[2])
-                else
-                    return 0
-                end";
-
-            var isLockAcquired = (await _db.ScriptEvaluateAsync(script, new RedisKey[] { RedisKeys.MatchLock(id) }, new RedisValue[] { RedisKeys.LockValue, 3 }))?.ToString() == "OK";
-            return isLockAcquired;
-        }
-
-        public async Task<bool> RemoveLock(int id)
-        {
-            string script = @"
-                if redis.call('exists', KEYS[1]) == 1 then
-                    return redis.call('del', KEYS[1])
-                else
-                    return 0
-                end";
-
-            return (int)await _db.ScriptEvaluateAsync(script, new RedisKey[] { RedisKeys.MatchLock(id) }) == 1;
-        }
-
-        public async Task<bool> AddLockAndRemoveQueue(int id)
-        {
-            if (!await AddLock(id)) return false;
-
             var transaction = _db.CreateTransaction();
             _ = transaction.SortedSetRemoveAsync(RedisKeys.MatchQueueKey, id);
             _ = transaction.SortedSetRemoveAsync(RedisKeys.MatchScoreKey, id);
@@ -108,20 +115,25 @@ namespace MatchMaking.Data
             return await transaction.ExecuteAsync();
         }
 
-        public async Task<bool> RemoveLockAndAddQueue(MatchQueueItem item)
+        public async Task<bool> AddQueueAndScore(MatchQueueItem item)
         {
-            if (!await RemoveLock(item.Id)) return false;
-
             var transaction = _db.CreateTransaction();
             _ = transaction.SortedSetAddAsync(RedisKeys.MatchQueueKey, item.Id, item.Score);
             _ = transaction.SortedSetAddAsync(RedisKeys.MatchScoreKey, item.Id, item.MMR);
 
             return await transaction.ExecuteAsync();
         }
-        public async Task<bool> IsLock(int id)
+
+        public async Task<bool> _AddQueueAndScore(IEnumerable<MatchQueueItem> items)
         {
-            var ret = await _db.StringGetAsync(RedisKeys.MatchLock(id));
-            return (ret.IsNullOrEmpty) ? false : true;
+            var transaction = _db.CreateTransaction();
+            foreach (var item in items)
+            {
+                _ = transaction.SortedSetAddAsync(RedisKeys.MatchQueueKey, item.Id, item.Score);
+                _ = transaction.SortedSetAddAsync(RedisKeys.MatchScoreKey, item.Id, item.MMR);
+            }
+
+            return await transaction.ExecuteAsync();
         }
 
         #endregion

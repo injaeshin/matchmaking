@@ -29,30 +29,4 @@ public class Score
 
         return (mmr, waitTime);
     }
-
-    public static int GetAdjustScore(int mmr, int waitTime)
-    {
-        if (mmr < 100)
-        {
-            return mmr + 100;
-        }
-
-        // 대기 시간에 따라 가중치 30%, 50%, 60% 적용
-        double weight = 0;
-        if (waitTime < 5)
-        {
-            weight = 0.3;
-        }
-        else if (waitTime < 15)
-        {
-            weight = 0.5;
-        }
-        else if (waitTime < 60)
-        {
-            weight = 0.6;
-        }
-
-        // 현재 점수에 가중치를 더함
-        return mmr + (int)(mmr * weight);
-    }
 }

@@ -7,8 +7,9 @@ public class MatchQueueItem
 {
     private int _id;
     private int _mmr;
-    private int _waitTime;
+
     private long _score;
+    private int  _waitTime;
     private IRedLock? _lock = null;
 
     public MatchQueueItem(int id, int mmr, long score, IRedLock? redLock = null)

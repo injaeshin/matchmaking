@@ -1,4 +1,5 @@
-﻿using MatchMaking.Data;
+﻿using MatchMaking.Common;
+using MatchMaking.Data;
 using MatchMaking.Match;
 using MatchMaking.Model;
 
@@ -13,17 +14,21 @@ namespace MatchMaking
 
             var random = new Random();
             var users = new List<MatchQueueItem>();
-            for (int i = 1; i <= 5000; i++)
+
+            var tasks = Enumerable.Range(0, 5000).Select(i =>
             {
                 var mmr = random.Next(1, 100);
-                users.Add(new MatchQueueItem(i, mmr, 0));
-            }
+                var user = new MatchQueueItem(i, mmr, 0);
+                user.SetScore(Score.EncodeScore(user.MMR));
+                users.Add(user);
+                return Task.CompletedTask;
+            });
 
-            for (int i = 0; i < 5000; i++)
-            {
-                var user = users[i];
-                await matchService.AddMatchQueue(user);
-            }
+            await Task.WhenAll(tasks);
+
+            await redisService._AddQueueAndScore(users);
+
+            //Console.ReadKey();
 
             matchService.Start();
 
