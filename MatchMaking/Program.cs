@@ -1,50 +1,42 @@
 ﻿using MatchMaking.Common;
-using MatchMaking.Data;
+using MatchMaking.Redis;
 using MatchMaking.Match;
 using MatchMaking.Model;
 
-namespace MatchMaking
+namespace MatchMaking;
+
+public class Program
 {
-    public class Program
+    static async Task Main(string[] args)
     {
-        static async Task Main(string[] args)
+        var mode = MatchMode.ThreeVsThree;
+
+        var redisService = new RedisService();
+        var matchManager = new MatchManager(redisService);
+
+        var random = new Random();
+        var users = new List<MatchQueueItem>();
+
+        var tasks = Enumerable.Range(0, 1000).Select(i =>
         {
-            var redisService = new RedisService();
+            var mmr = random.Next(1, 100);
+            var user = new MatchQueueItem(i, mmr, 0);
+            user.SetScore(MatchScore.EncodeScore(user.MMR));
+            users.Add(user);
+            return Task.CompletedTask;
+        });
+        await Task.WhenAll(tasks);
 
-            var matchService = new MatchService(redisService);
-            //var matchService = new MatchServiceSingle(redisService);
+        //await redisService._AddQueueAndScoreAsync(MatchMode.ThreeVsThree, users);
 
-            var random = new Random();
-            var users = new List<MatchQueueItem>();
-
-            var tasks = Enumerable.Range(0, 5000).Select(i =>
-            {
-                var mmr = random.Next(1, 100);
-                var user = new MatchQueueItem(i, mmr, 0);
-                user.SetScore(Score.EncodeScore(user.MMR));
-                users.Add(user);
-                return Task.CompletedTask;
-            });
-            await Task.WhenAll(tasks);
-
-            await redisService._AddQueueAndScore(users);
-
-            //foreach (var u in users)
-            //{
-            //    await redisService.AddMatchQueue(u);
-            //    await redisService.AddMatchScore(u);
-            //}
-
-            //Console.ReadKey();
-
-            matchService.Start();
-
-            Console.ReadKey();
-
-            matchService.Stop();
-
-            Console.ReadKey();
+        foreach (var u in users)
+        {
+            await matchManager.AddMatchQueueAsync(mode, u);
         }
+
+        matchManager.Start();
+
+        Console.ReadKey();
     }
 }
 

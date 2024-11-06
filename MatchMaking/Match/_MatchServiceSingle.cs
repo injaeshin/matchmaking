@@ -1,5 +1,5 @@
 ﻿using MatchMaking.Common;
-using MatchMaking.Data;
+using MatchMaking.Redis;
 using MatchMaking.Model;
 
 using System.Diagnostics;
@@ -14,6 +14,8 @@ public class MatchServiceSingle
     private bool _isRunning = false;
     private bool _disposed = false;
 
+    private int _maxCount;
+    private MatchMode _mode = MatchMode.ThreeVsThree;
     private readonly RedisService _redisService;
     private readonly MatchBalancer _matchBalancer;
 
@@ -27,6 +29,8 @@ public class MatchServiceSingle
 
     public MatchServiceSingle(RedisService redisService)
     {
+        _maxCount = (int)_mode;
+
         _matchBalancer = new();
         _redisService = redisService;
 
@@ -89,7 +93,7 @@ public class MatchServiceSingle
                 continue;
             }
 
-            var waitingCount = await _redisService.GetMatchQueueCount();
+            var waitingCount = await _redisService.GetMatchQueueCountAsync(_mode);
             if (waitingCount == 0)
             {
                 await Task.Delay(100);
@@ -102,7 +106,7 @@ public class MatchServiceSingle
             }
 
             // Log time and count when queue is empty
-            if (await _redisService.IsEmptyMatchQueueAsync())
+            if (await _redisService.IsEmptyMatchQueueAsync(_mode))
             {
                 _queueStopwatch.Stop();
                 Console.WriteLine($"큐가 비워질 때까지의 시간: {_queueStopwatch.ElapsedMilliseconds} ms");
@@ -118,7 +122,7 @@ public class MatchServiceSingle
     // Processes matching for a single session
     public async Task<bool> MatchProcess()
     {
-        if (await _redisService.IsEmptyMatchQueueAsync())
+        if (await _redisService.IsEmptyMatchQueueAsync(_mode))
         {
             return false;
         }
@@ -149,7 +153,7 @@ public class MatchServiceSingle
     private async Task AssignMatchedUsers(Dictionary<int, MatchQueueItem> targets)
     {
         var users = targets.Values.ToList();
-        await _redisService._RemoveQueueAndScore(users);
+        await _redisService._RemoveQueueAndScore(_mode, users);
 
         foreach (var u in users)
         {
@@ -199,9 +203,7 @@ public class MatchServiceSingle
     }
 
     private async Task<bool> TryGetUserMatchAsync(MatchQueueItem user, Dictionary<int, MatchQueueItem> targets)
-    {
-        var maxCount = (int)MatchMode.FiveVsFive;
-       
+    {       
         var tryCount = 1;
         var adjustMMR = _matchBalancer.GetAdjustMMR(user.WaitTime);
 
@@ -212,46 +214,46 @@ public class MatchServiceSingle
             var minScore = Math.Max(0, (user.MMR - adjustMMR) * tryCount);
             var maxScore = Math.Min(9999, (user.MMR + adjustMMR) * tryCount);
 
-            var count = maxCount - targets.Count + 10;
-            var candidates = await _redisService.GetMatchCandidates(minScore, maxScore, count);
+            var count = _maxCount - targets.Count + 10;
+            var candidates = await _redisService.GetMatchCandidatesAsync(_mode, minScore, maxScore, count);
             if (candidates == null || candidates.Count == 0)
             {
                 break;
             }
 
-            SelectUnlockUserAsync(candidates, targets, maxCount);
-            if (targets.Count == maxCount)
+            SelectUnlockUserAsync(candidates, targets, _maxCount);
+            if (targets.Count == _maxCount)
             {
                 break;
             }
         } while (++tryCount < _tryMaxCount);
 
         // Re-add unmatched users to the queue if not enough users were found
-        if (targets.Count != maxCount)
+        if (targets.Count != _maxCount)
         {
             targets.Clear();
             return false;
         }
 
-        return targets.Count == maxCount;
+        return targets.Count == _maxCount;
     }
 
     public async Task<bool> AddMatchQueueAsync(MatchQueueItem user)
     {
-        user.SetScore(Score.EncodeScore(user.MMR));
+        user.SetScore(MatchScore.EncodeScore(user.MMR));
         if (user.MMR == 0)
         {
             throw new Exception($"Invalid MMR: {user.Id} - {user.MMR}");
         }
 
-        if (!await _redisService.AddMatchQueue(user))
+        if (!await _redisService.AddMatchQueueAsync(_mode, user))
         {
             return false;
         }
 
-        if (!await _redisService.AddMatchScore(user))
+        if (!await _redisService.AddMatchScoreAsync(_mode, user))
         {
-            await _redisService.RemoveMatchScore(user.Id);
+            await _redisService.RemoveMatchScoreAsync(_mode, user.Id);
             return false;
         }
 
@@ -266,7 +268,7 @@ public class MatchServiceSingle
 
         do
         {
-            var candidates = await _redisService.GetUserMatchQueue(begin, begin + _queueBatchSize - 1);
+            var candidates = await _redisService.GetUserMatchQueueAsync(_mode, begin, begin + _queueBatchSize - 1);
             if (candidates == null || candidates.Count == 0)
             {
                 return null;

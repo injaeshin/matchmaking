@@ -1,18 +1,14 @@
-﻿
-using RedLockNet;
-
-namespace MatchMaking.Model;
+﻿namespace MatchMaking.Model;
 
 public class MatchQueueItem
 {
-    private int _id;
-    private int _mmr;
-
+    private readonly int _id;
     private long _score;
-    private int  _waitTime;
-    private IRedLock? _lock = null;
 
-    public MatchQueueItem(int id, int mmr, long score, IRedLock? redLock = null)
+    private int _mmr;    
+    private int  _waitTime;
+
+    public MatchQueueItem(int id, int mmr, long score)
     {
         _id = id;
         _mmr = mmr;
@@ -21,8 +17,6 @@ public class MatchQueueItem
         {
             SetDecodeScore(score);
         }
-
-        _lock = redLock;
     }
 
     public int Id => _id;
@@ -41,29 +35,13 @@ public class MatchQueueItem
         _score = score;
         return this;
     }
-    public MatchQueueItem SetWaitTime(int time)
-    {
-        _waitTime = time;
-        return this;
-    }
-
-    public MatchQueueItem SetLock(IRedLock? @lock)
-    {
-        _lock = @lock;
-        return this;
-    }
-    public IRedLock? GetLock()
-    {
-        return _lock;
-    }
 
     public MatchQueueItem SetDecodeScore(long score)
     {
         _score = score;
-        (var mmr, int waitTime) = Common.Score.DecodeScore(score);
+        (var mmr, int waitTime) = Match.MatchScore.DecodeScore(score);
         _mmr = mmr;
         _waitTime = waitTime;
-
         return this;
     }
 }

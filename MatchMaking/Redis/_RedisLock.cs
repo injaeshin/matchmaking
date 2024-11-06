@@ -2,9 +2,9 @@
 using RedLockNet.SERedis;
 using RedLockNet.SERedis.Configuration;
 
-namespace MatchMaking.Data
+namespace MatchMaking.Redis
 {
-    public class RedisLock
+    public class _RedisLock
     {
         private readonly RedLockFactory _redLockFactory;
 
@@ -12,7 +12,7 @@ namespace MatchMaking.Data
 
         public TimeSpan LockDuration => _lockDuration;
 
-        public RedisLock()
+        public _RedisLock()
         {
             var redisConnection = RedisConnection.Connection;
             var redLockEndpoints = new List<RedLockEndPoint>

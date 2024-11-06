@@ -1,6 +1,8 @@
-﻿namespace MatchMaking.Common;
+﻿using MatchMaking.Common;
 
-public class Score
+namespace MatchMaking.Match;
+
+public class MatchScore
 {
     private const int MIN_MMR = 0;
     private const int MAX_MMR = 9999;

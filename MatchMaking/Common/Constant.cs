@@ -10,9 +10,10 @@
 
     public enum MatchMode
     {
+        None = 0,
+        OneVsOne = 2,
         TwoVsTwo = 4,
         ThreeVsThree = 6,
-        FourVsFour = 8,
-        FiveVsFive = 10
+        //FiveVsFive = 10
     }
 }

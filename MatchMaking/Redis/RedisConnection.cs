@@ -1,6 +1,6 @@
 ﻿using StackExchange.Redis;
 
-namespace MatchMaking.Data
+namespace MatchMaking.Redis
 {
     public class RedisConnection
     {
@@ -21,9 +21,8 @@ namespace MatchMaking.Data
 
         public static ConnectionMultiplexer Connection => lazyConnection.Value;
 
-        public static IDatabase GetDatabase(int dbIndex = 0)
-        {
-            return Connection.GetDatabase(dbIndex);
-        }
+        public static ISubscriber GetSubscriber() => Connection.GetSubscriber();
+
+        public static IDatabase GetDatabase(int dbIndex = 0) => Connection.GetDatabase(dbIndex);
     }
 }
