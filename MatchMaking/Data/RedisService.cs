@@ -38,7 +38,6 @@ namespace MatchMaking.Data
         //                                    new RedisValue[] { RedisKeys.LockValue, _redisLock.LockDuration.TotalMilliseconds }))?.ToString() == "OK";
         //    return isLockAcquired;
         //}
-
         //public async Task<bool> RemoveLock(int id)
         //{
         //    string script = @"
@@ -50,13 +49,11 @@ namespace MatchMaking.Data
 
         //    return (int)await _db.ScriptEvaluateAsync(script, new RedisKey[] { RedisKeys.MatchLock(id) }) == 1;
         //}
-
         //public async Task<bool> IsLock(int id)
         //{
         //    var ret = await _db.StringGetAsync(RedisKeys.MatchLock(id));
         //    return (ret.IsNullOrEmpty) ? false : true;
         //}
-
         #endregion
 
         #region Match Queue
@@ -64,9 +61,11 @@ namespace MatchMaking.Data
         public async Task<long> GetMatchQueueCount() =>
             await _db.SortedSetLengthAsync(RedisKeys.MatchQueueKey);
 
-        public async Task<bool> IsEmptyMatchQueueAsync() => await _db.SortedSetLengthAsync(RedisKeys.MatchQueueKey) == 0;
+        public async Task<bool> IsEmptyMatchQueueAsync() =>
+            await _db.SortedSetLengthAsync(RedisKeys.MatchQueueKey) == 0;
 
-        public async Task<bool> AddMatchQueue(MatchQueueItem item) => await _db.SortedSetAddAsync(RedisKeys.MatchQueueKey, item.Id, item.Score);
+        public async Task<bool> AddMatchQueue(MatchQueueItem item) =>
+            await _db.SortedSetAddAsync(RedisKeys.MatchQueueKey, item.Id, item.Score);
 
         public async Task<List<MatchQueueItem>?> GetUserMatchQueue(int begin, int end)
         {
@@ -131,6 +130,18 @@ namespace MatchMaking.Data
             {
                 _ = transaction.SortedSetAddAsync(RedisKeys.MatchQueueKey, item.Id, item.Score);
                 _ = transaction.SortedSetAddAsync(RedisKeys.MatchScoreKey, item.Id, item.MMR);
+            }
+
+            return await transaction.ExecuteAsync();
+        }
+
+        public async Task<bool> _RemoveQueueAndScore(IEnumerable<MatchQueueItem> items)
+        {
+            var transaction = _db.CreateTransaction();
+            foreach (var item in items)
+            {
+                _ = transaction.SortedSetRemoveAsync(RedisKeys.MatchQueueKey, item.Id);
+                _ = transaction.SortedSetRemoveAsync(RedisKeys.MatchScoreKey, item.Id);
             }
 
             return await transaction.ExecuteAsync();

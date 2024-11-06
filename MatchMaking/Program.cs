@@ -10,7 +10,9 @@ namespace MatchMaking
         static async Task Main(string[] args)
         {
             var redisService = new RedisService();
+
             var matchService = new MatchService(redisService);
+            //var matchService = new MatchServiceSingle(redisService);
 
             var random = new Random();
             var users = new List<MatchQueueItem>();
@@ -23,10 +25,15 @@ namespace MatchMaking
                 users.Add(user);
                 return Task.CompletedTask;
             });
-
             await Task.WhenAll(tasks);
 
             await redisService._AddQueueAndScore(users);
+
+            //foreach (var u in users)
+            //{
+            //    await redisService.AddMatchQueue(u);
+            //    await redisService.AddMatchScore(u);
+            //}
 
             //Console.ReadKey();
 
