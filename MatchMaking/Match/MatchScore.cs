@@ -10,7 +10,7 @@ public class MatchScore
 
     public static long EncodeScore(int mmr)
     {
-        var ts = Util.GetUnixTimestamp();
+        var ts = TimeHelper.GetUnixTimestamp();
         // timestamp * 10000 + mmr
         // 예: 1500 MMR, 1000초 → 10000000 + 1500 = 10001500
         return ts * MMR_MULTIPLIER + mmr;
@@ -27,7 +27,7 @@ public class MatchScore
 
         // 상위는 등록 시간(초)
         var beginTime = score / MMR_MULTIPLIER;
-        var waitTime = (int)(Util.GetUnixTimestamp() - beginTime);
+        var waitTime = (int)(TimeHelper.GetUnixTimestamp() - beginTime);
 
         return (mmr, waitTime);
     }

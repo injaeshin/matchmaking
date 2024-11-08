@@ -14,25 +14,7 @@ public class MatchBalancer
     private int _currentIndex = 0;
     private int _totalSeconds = 0;
 
-    private Timer _timer;
-
-    public MatchBalancer()
-    {
-        _timer = new Timer(LogAverageTime, null, 0, 5000);
-    }
-
-    private void LogAverageTime(object? state)
-    {
-        var avgTime = GetAverageMatchTime();
-        if (avgTime == 0)
-        {
-            return;
-        }
-
-        Console.WriteLine($"Matching Average Time: {avgTime} seconds");
-    }
-
-    private int GetAverageMatchTime()
+    public int GetAverageMatchTime()
     {
         lock (_lock)
         {

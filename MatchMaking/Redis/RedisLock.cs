@@ -9,16 +9,16 @@ namespace MatchMaking.Redis
         private readonly RedLockFactory _redLockFactory;
 
         private readonly TimeSpan _lockDuration = TimeSpan.FromSeconds(7);
-
         public TimeSpan LockDuration => _lockDuration;
 
         public RedisLock()
         {
             var redisConnection = RedisConnection.Connection;
-            var redLockEndpoints = new List<RedLockEndPoint>
+            var redLockEndpoints = new List<RedLockEndPoint>();
+            foreach (var endPoint in redisConnection.GetEndPoints())
             {
-                new(redisConnection.GetEndPoints().First())
-            };
+                redLockEndpoints.Add(new RedLockEndPoint(endPoint));
+            }
 
             _redLockFactory = RedLockFactory.Create(redLockEndpoints);
         }
@@ -28,23 +28,34 @@ namespace MatchMaking.Redis
             return await _redLockFactory.CreateLockAsync(resource, expiryTime);
         }
 
-        public async Task<bool> TryAcquireLockAsync(string resource, TimeSpan expiryTime)
-        {
-            var redLock = await _redLockFactory.CreateLockAsync(resource, expiryTime);
-            if (redLock.IsAcquired)
-            {
-                return true;
-            }
-
-            return false;
-        }
-
         public async Task ReleaseLockAsync(IRedLock redLock)
         {
             if (redLock.IsAcquired)
             {
                 await redLock.DisposeAsync();
             }
+        }
+
+        public async Task<T> TryLockAndRunAsync<T>(string resource, TimeSpan expiryTime, Func<Task<T>> func)
+        {
+            using IRedLock redLock = await _redLockFactory.CreateLockAsync(resource, expiryTime);
+            if (!redLock.IsAcquired)
+            {
+                return default!;
+            }
+
+            return await func();
+        }
+
+        public async Task<T> TryLockAndRunAsync<T>(string resource, TimeSpan expiryTime, Func<object, Task<T>> func, object param)
+        {
+            using IRedLock redLock = await _redLockFactory.CreateLockAsync(resource, expiryTime);
+            if (!redLock.IsAcquired)
+            {
+                return default!;
+            }
+
+            return await func(param);
         }
     }
 }

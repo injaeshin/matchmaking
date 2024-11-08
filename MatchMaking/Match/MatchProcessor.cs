@@ -3,7 +3,7 @@ using MatchMaking.Redis;
 
 namespace MatchMaking.Match
 {
-    public readonly struct MatchProcessor
+    public class MatchProcessor
     {
         public MatchMode MatchMode { get; }
         public MatchService MatchService { get; }
@@ -14,6 +14,5 @@ namespace MatchMaking.Match
             MatchMode = mode;
             MatchService = new MatchService(redis, MatchBalancer, mode);
         }
-
     }
 }

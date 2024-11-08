@@ -10,15 +10,12 @@ public delegate void OnMatchFailure(MatchMode mode, MatchQueueItem user);
 public class MatchService
 {
     private const int _tryMaxCount = 3;
-    private const int _queueWaitCount = 1000;
     private const int _queueBatchSize = 10;
 
-    private int _maxCount;
-
-    private readonly ConcurrentSet<int> _userLocks = new();
-    private readonly SemaphoreSlim _semaphore = new(1, 1);
+    private readonly int _maxCount;
     private readonly RedisService _redisService;
     private readonly MatchBalancer _matchBalancer;
+    private readonly SimpleLock<int> _lock = new();
     private readonly Action<MatchMode, int> _pubQueueDecreaseAction;
 
     public event OnMatchSuccess? OnMatchSuccessEvent;
@@ -72,7 +69,7 @@ public class MatchService
     {
         foreach (var tg in targets.Values)
         {
-            if (!_userLocks.Remove(tg.Id))
+            if (!_lock.Unlock(tg.Id))
             {
                 throw new InvalidOperationException("Failed to remove lock user");
             }
@@ -92,7 +89,7 @@ public class MatchService
                 continue;
             }
 
-            if (!_userLocks.Add(tg.Id))
+            if (!_lock.TryLock(tg.Id))
             {
                 continue;
             }
@@ -121,7 +118,7 @@ public class MatchService
 
         if (user.WaitTime > MatchBalancer.MatchWaitTimeout)
         {
-            if (!_userLocks.Remove(user.Id))
+            if (!_lock.Unlock(user.Id))
             {
                 throw new Exception($"Failed to remove lock: {user.Id}");
             }
@@ -163,7 +160,7 @@ public class MatchService
             {
                 await _redisService.AddQueueAndScoreAsync(MatchMode, tg);
 
-                if (!_userLocks.Remove(tg.Id))
+                if (!_lock.Unlock(tg.Id))
                 {
                     throw new Exception($"Failed to remove user lock: {tg.Id}");
                 }
@@ -193,7 +190,7 @@ public class MatchService
             {
                 var id = (int)candidate.Id;
 
-                if (!_userLocks.Add(id))
+                if (!_lock.TryLock(id))
                 {
                     continue;
                 }
@@ -211,41 +208,5 @@ public class MatchService
 
         return null;
     }
-
-    //public async void MatchWoker(CancellationToken token)
-    //{
-    //    while (!token.IsCancellationRequested)
-    //    {
-    //        var waitingCount = await _redisService.GetMatchQueueCount(_mode);
-    //        if (waitingCount == 0)
-    //        {
-    //            await Task.Delay(100);
-    //            continue;
-    //        }
-    //        if (waitingCount <= _queueWaitCount)
-    //        {
-    //            await _semaphore.WaitAsync();
-    //            try
-    //            {
-    //                if (!await MatchProcess())
-    //                {
-    //                    await Task.Delay(30);
-    //                }
-    //            }
-    //            finally
-    //            {
-    //                _semaphore.Release();
-    //            }
-    //        }
-    //        else
-    //        {
-    //            if (!await MatchProcess())
-    //            {
-    //                await Task.Delay(30);
-    //            }
-    //        }
-    //        await Task.Delay(30);
-    //    }
-    //}
 }
 

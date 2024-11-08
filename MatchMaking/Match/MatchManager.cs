@@ -4,8 +4,9 @@ using MatchMaking.Model;
 
 namespace MatchMaking.Match;
 
-public class MatchManager
+public partial class MatchManager
 {
+    private Timer _averageTimeCheckTimer;
     private Action<MatchMode>? PubIncreaseQueue;
 
     private readonly RedisService _redisService;
@@ -15,9 +16,24 @@ public class MatchManager
     public MatchManager(RedisService redis)
     {
         _redisService = redis;
+        _averageTimeCheckTimer = new Timer(async _ => await CheckAverageMatchTimeAsync(), null, TimeSpan.FromMinutes(3), TimeSpan.FromMinutes(1));
 
         InitEventAction();
         InitMatchProcess();
+    }
+
+    private async Task CheckAverageMatchTimeAsync()
+    {
+        foreach (var processor in _matchProcess.Values)
+        {
+            int averageTime = processor.MatchBalancer.GetAverageMatchTime();
+            if (averageTime < 15)
+            {
+                _taskCounter.IncreaseTask(processor.MatchMode, ProcessMatchQueueAsync, processor.MatchService);
+            }
+        }
+
+        await Task.CompletedTask;
     }
 
     #region Initialize
@@ -43,19 +59,23 @@ public class MatchManager
         _redisService.RedisMessage.DecreaseMatchQueueEvent += async (mode, matchedUserCount) =>
                                                             await HandleDecreaseMatchQueueAsync(mode, matchedUserCount);
     }
+
     #endregion
 
     public void Start()
     {
         foreach (var mp in _matchProcess.Values)
         {
-            _taskCounter.IncreaseTask(mp.MatchMode, mp.MatchService, ProcessMatchQueueAsync);
+            _taskCounter.IncreaseTask(mp.MatchMode, ProcessMatchQueueAsync, mp.MatchService);
         }
     }
 
     public void Stop()
     {
-        _taskCounter.Clear();
+        _taskCounter.Dispose();
+
+        _averageTimeCheckTimer?.Change(Timeout.Infinite, 0);
+        _averageTimeCheckTimer?.Dispose();
     }
 
     public async Task<bool> AddMatchQueueAsync(MatchMode mode, MatchQueueItem user)
@@ -78,7 +98,7 @@ public class MatchManager
 
     private async Task ProcessMatchQueueAsync(object o, CancellationToken token)
     {
-        MatchService service = o as MatchService ?? throw new InvalidOperationException("invalid object");
+        MatchService service = o as MatchService ?? throw new InvalidOperationException("Invalid object");
 
         while (!token.IsCancellationRequested)
         {
@@ -97,7 +117,10 @@ public class MatchManager
             }
         }
     }
+}
 
+public partial class MatchManager
+{
     private async Task HandleMatchSuccessAsync(MatchMode mode, Dictionary<int, MatchQueueItem> users)
     {
         Console.WriteLine($"Match Success: {mode} {string.Join(", ", users.Select(x => x.Key))}");

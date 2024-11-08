@@ -20,7 +20,7 @@ namespace MatchMaking.Redis
     {
         private readonly IDatabase _db = RedisConnection.GetDatabase();
         private readonly RedisMessage _redisMessage = new();
-        private readonly Random _random = new();        
+        private readonly Random _random = new();
 
         public RedisMessage RedisMessage => _redisMessage;
 

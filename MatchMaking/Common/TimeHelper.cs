@@ -1,6 +1,6 @@
 ﻿namespace MatchMaking.Common;
 
-public class Util
+public class TimeHelper
 {
     public static long GetUnixTimestamp()
     {
