@@ -16,11 +16,21 @@ public static class Converter
 
     public static string ToFastString(this MatchMode matchMode)
     {
-        return _matchModeToString.ContainsKey(matchMode) ? _matchModeToString[matchMode] : _matchModeToString[MatchMode.None];
+        if (!_matchModeToString.TryGetValue(matchMode, out var value))
+        {
+            return _matchModeToString[MatchMode.None];
+        }
+
+        return value;
     }
 
     public static MatchMode ToMatchMode(this string name)
     {
-        return _stringToMatchMode.ContainsKey(name) ? _stringToMatchMode[name] : MatchMode.None;
+        if (!_stringToMatchMode.TryGetValue(name, out var value))
+        {
+            return MatchMode.None;
+        }
+
+        return value;
     }
 }

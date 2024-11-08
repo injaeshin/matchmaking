@@ -8,7 +8,7 @@ public class MatchManager
 {
     private Action<MatchMode>? PubIncreaseQueue;
 
-    private readonly RedisService  _redisService;
+    private readonly RedisService _redisService;
     private readonly TaskCounter<MatchMode> _taskCounter = new();
     private readonly Dictionary<MatchMode, MatchProcessor> _matchProcess = new();
 
@@ -16,21 +16,22 @@ public class MatchManager
     {
         _redisService = redis;
 
-        InitMatchProcess();
         InitEventAction();
+        InitMatchProcess();
     }
 
     #region Initialize
     private void InitMatchProcess()
     {
-        var matchBalancer = new MatchBalancer();
         foreach (MatchMode mode in Enum.GetValues(typeof(MatchMode)))
         {
-            var service = new MatchService(_redisService, matchBalancer, mode);
+            var processor = new MatchProcessor(_redisService, mode);
+
+            var service = processor.MatchService;
             service.OnMatchSuccessEvent += async (mode, users) => await HandleMatchSuccessAsync(mode, users);
             service.OnMatchFailureEvent += async (mode, userId) => await HandleMatchFailureAsync(mode, userId);
 
-            _matchProcess.Add(mode, new MatchProcessor(mode, service, new CancellationTokenSource()));
+            _matchProcess.Add(mode, processor);
         }
     }
 
@@ -40,7 +41,7 @@ public class MatchManager
 
         _redisService.RedisMessage.IncreaseMatchQueueEvent += async mode => await HandleIncreaseMatchQueueAsync(mode);
         _redisService.RedisMessage.DecreaseMatchQueueEvent += async (mode, matchedUserCount) =>
-                                                            await HandleDecreaseMatchQueueAsync(mode, matchedUserCount);  
+                                                            await HandleDecreaseMatchQueueAsync(mode, matchedUserCount);
     }
     #endregion
 
@@ -48,14 +49,25 @@ public class MatchManager
     {
         foreach (var mp in _matchProcess.Values)
         {
-            _taskCounter.Increase(mp.Mode);
-            Task.Run(() => ProcessMatchQueueAsync(mp.MatchService, mp.CancellationToken.Token));
-        }        
+            _taskCounter.IncreaseTask(mp.MatchMode, mp.MatchService, ProcessMatchQueueAsync);
+        }
     }
 
-    public async Task<bool> AddMatchQueueAsync(MatchMode mode, MatchQueueItem item)
+    public void Stop()
     {
-        if (!await _redisService.AddQueueAndScoreAsync(mode, item))
+        _taskCounter.Clear();
+    }
+
+    public async Task<bool> AddMatchQueueAsync(MatchMode mode, MatchQueueItem user)
+    {
+        if (user.MMR == 0)
+        {
+            throw new Exception($"Invalid MMR: {user.Id} - {user.MMR}");
+        }
+
+        user.SetScore(MatchScore.EncodeScore(user.MMR));
+
+        if (!await _redisService.AddQueueAndScoreAsync(mode, user))
         {
             return false;
         }
@@ -64,8 +76,10 @@ public class MatchManager
         return true;
     }
 
-    private async Task ProcessMatchQueueAsync(MatchService service, CancellationToken token)
+    private async Task ProcessMatchQueueAsync(object o, CancellationToken token)
     {
+        MatchService service = o as MatchService ?? throw new InvalidOperationException("invalid object");
+
         while (!token.IsCancellationRequested)
         {
             try
@@ -83,8 +97,6 @@ public class MatchManager
             }
         }
     }
-
-
 
     private async Task HandleMatchSuccessAsync(MatchMode mode, Dictionary<int, MatchQueueItem> users)
     {
@@ -113,5 +125,4 @@ public class MatchManager
 
         await Task.CompletedTask;
     }
-
 }

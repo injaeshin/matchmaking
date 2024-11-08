@@ -21,7 +21,6 @@ public class Program
         {
             var mmr = random.Next(1, 100);
             var user = new MatchQueueItem(i, mmr, 0);
-            user.SetScore(MatchScore.EncodeScore(user.MMR));
             users.Add(user);
             return Task.CompletedTask;
         });

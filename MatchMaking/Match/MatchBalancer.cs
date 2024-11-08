@@ -2,14 +2,14 @@
 
 public class MatchBalancer
 {
-    private const int REQUEST_TIMEOUT      = 60; // seconds
+    private const int MATCH_WAIT_TIMEOUT   = 60; // seconds
     private const int WAIT_TIME_WEIGHT     = 1000;        
     private const int MATCH_TIME_MAX_COUNT = 300;
     
-    public static int RequestTimeout => REQUEST_TIMEOUT;
+    public static int MatchWaitTimeout => MATCH_WAIT_TIMEOUT;
 
     private readonly object _lock = new();
-    private readonly List<int> _matchTimes = new(MATCH_TIME_MAX_COUNT);
+    private readonly int[] _matchTimes = new int[MATCH_TIME_MAX_COUNT];
 
     private int _currentIndex = 0;
     private int _totalSeconds = 0;
@@ -23,25 +23,25 @@ public class MatchBalancer
 
     private void LogAverageTime(object? state)
     {
-        var t = GetAverageMatchTime();
-        if (t == 0)
+        var avgTime = GetAverageMatchTime();
+        if (avgTime == 0)
         {
             return;
         }
 
-        Console.WriteLine($"Matching Average Time: {t} seconds");
+        Console.WriteLine($"Matching Average Time: {avgTime} seconds");
     }
 
     private int GetAverageMatchTime()
     {
         lock (_lock)
         {
-            if (_matchTimes.Count == 0)
+            if (_totalSeconds == 0)
             {
                 return 0;
             }
 
-            return _totalSeconds / _matchTimes.Count;
+            return _totalSeconds / MATCH_TIME_MAX_COUNT;
         }
     }
 
@@ -49,16 +49,8 @@ public class MatchBalancer
     {
         lock (_lock)
         {
-            if (_matchTimes.Count >= MATCH_TIME_MAX_COUNT)
-            {
-                _totalSeconds -= _matchTimes[_currentIndex];
-                _matchTimes[_currentIndex] = seconds;
-            }
-            else
-            {
-                _matchTimes.Add(seconds);
-            }
-
+            _totalSeconds -= _matchTimes[_currentIndex];
+            _matchTimes[_currentIndex] = seconds;
             _totalSeconds += seconds;
             _currentIndex = (_currentIndex + 1) % MATCH_TIME_MAX_COUNT;
         }

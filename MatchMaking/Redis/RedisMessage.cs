@@ -1,5 +1,4 @@
 ﻿using MatchMaking.Common;
-using MatchMaking.Model;
 using StackExchange.Redis;
 
 namespace MatchMaking.Redis;
@@ -13,8 +12,7 @@ public class RedisMessage
     public event OnMatchComplete? DecreaseMatchQueueEvent;
 
     private readonly Dictionary<string, RedisChannel> _channels;
-
-    private ISubscriber _pubsub = RedisConnection.GetSubscriber();
+    private readonly ISubscriber _pubsub = RedisConnection.GetSubscriber();
 
     public RedisMessage()
     {
@@ -31,7 +29,7 @@ public class RedisMessage
     {
         _pubsub.SubscribeAsync(GetChannel(RedisKeys.MatchRequest), (channel, value) =>
         {
-            if (IncreaseMatchQueueEvent == null && !value.HasValue)
+            if (IncreaseMatchQueueEvent is null && !value.HasValue)
             {
                 return;
             }
@@ -41,7 +39,7 @@ public class RedisMessage
 
         _pubsub.SubscribeAsync(GetChannel(RedisKeys.MatchComplete), (channel, value) =>
         {
-            if (DecreaseMatchQueueEvent == null && !value.HasValue)
+            if (DecreaseMatchQueueEvent is null && !value.HasValue)
             {
                 return;
             }
@@ -67,12 +65,12 @@ public class RedisMessage
 
     private RedisChannel GetChannel(string key)
     {
-        if (!_channels.ContainsKey(key))
+        if (!_channels.TryGetValue(key, out var ch))
         {
             throw new ArgumentException($"Invalid key: {key}");
         }
 
-        return _channels[key];
+        return ch;
     }
 
 }

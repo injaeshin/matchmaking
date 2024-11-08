@@ -1,11 +1,19 @@
 ﻿using MatchMaking.Common;
+using MatchMaking.Redis;
 
 namespace MatchMaking.Match
 {
-    public readonly struct MatchProcessor(MatchMode mode, MatchService matchService, CancellationTokenSource cancellationTokenSource)
+    public readonly struct MatchProcessor
     {
-        public readonly MatchMode Mode { get; } = mode;
-        public readonly MatchService MatchService { get; } = matchService;
-        public readonly CancellationTokenSource CancellationToken { get; } = cancellationTokenSource;
+        public MatchMode MatchMode { get; }
+        public MatchService MatchService { get; }
+        public MatchBalancer MatchBalancer { get; } = new();
+
+        public MatchProcessor(RedisService redis, MatchMode mode)
+        {
+            MatchMode = mode;
+            MatchService = new MatchService(redis, MatchBalancer, mode);
+        }
+
     }
 }

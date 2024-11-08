@@ -14,6 +14,6 @@
         OneVsOne = 2,
         TwoVsTwo = 4,
         ThreeVsThree = 6,
-        //FiveVsFive = 10
+        FiveVsFive = 10
     }
 }

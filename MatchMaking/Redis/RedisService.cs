@@ -19,9 +19,8 @@ namespace MatchMaking.Redis
     public class RedisService
     {
         private readonly IDatabase _db = RedisConnection.GetDatabase();
-        private readonly Random _random = new();
-
         private readonly RedisMessage _redisMessage = new();
+        private readonly Random _random = new();        
 
         public RedisMessage RedisMessage => _redisMessage;
 
@@ -78,7 +77,7 @@ namespace MatchMaking.Redis
         public async Task<long> GetUserScoreMatchQueueAsync(MatchMode mode, int id)
         {
             var score = await _db.SortedSetScoreAsync(RedisKeys.MatchQueueKey(mode), id);
-            return (score == null) ? 0 : (long)score;
+            return (score is null) ? 0 : (long)score;
         }
 
         #endregion
@@ -140,7 +139,7 @@ namespace MatchMaking.Redis
             return await transaction.ExecuteAsync();
         }
 
-        public async Task<bool> _RemoveQueueAndScore(MatchMode mode, IEnumerable<MatchQueueItem> items)
+        public async Task<bool> _RemoveQueueAndScore(MatchMode mode, ICollection<MatchQueueItem> items)
         {
             var transaction = _db.CreateTransaction();
             foreach (var item in items)
