@@ -1,18 +1,19 @@
-﻿namespace MatchMaking.Match;
+﻿using MatchMaking.Common;
+
+namespace MatchMaking.Match;
 
 public class MatchBalancer
 {
-    private const int MATCH_WAIT_TIMEOUT   = 60; // seconds
-    private const int WAIT_TIME_WEIGHT     = 1000;        
-    private const int MATCH_TIME_MAX_COUNT = 300;
-    
-    public static int MatchWaitTimeout => MATCH_WAIT_TIMEOUT;
+    public const int WaitTimeReset = 5;
+    public const int WaitTimeWeight = 1000;
+    public const int WaitTimeMaxCount = 300;
 
     private readonly object _lock = new();
-    private readonly int[] _matchTimes = new int[MATCH_TIME_MAX_COUNT];
-
+    private readonly int[] _matchTimes = new int[WaitTimeMaxCount];
+        
     private int _currentIndex = 0;
     private int _totalSeconds = 0;
+    private long _lastAddedMatchTime = 0;
 
     public int GetAverageMatchTime()
     {
@@ -23,8 +24,22 @@ public class MatchBalancer
                 return 0;
             }
 
-            return _totalSeconds / MATCH_TIME_MAX_COUNT;
+            if ((TimeHelper.GetUnixTimestamp() - _lastAddedMatchTime) > WaitTimeReset)
+            {
+                ResetMatchTimes();
+
+            }
+
+            return _totalSeconds / WaitTimeMaxCount;
         }
+    }
+
+    private void ResetMatchTimes()
+    {
+        _totalSeconds = 0;
+        _currentIndex = 0;
+        _lastAddedMatchTime = 0;
+        Array.Clear(_matchTimes, 0, _matchTimes.Length);
     }
 
     public void AddMatchTime(int seconds)
@@ -34,7 +49,8 @@ public class MatchBalancer
             _totalSeconds -= _matchTimes[_currentIndex];
             _matchTimes[_currentIndex] = seconds;
             _totalSeconds += seconds;
-            _currentIndex = (_currentIndex + 1) % MATCH_TIME_MAX_COUNT;
+            _currentIndex = (_currentIndex + 1) % WaitTimeMaxCount;
+            _lastAddedMatchTime = TimeHelper.GetUnixTimestamp();
         }
     }
 
@@ -45,18 +61,18 @@ public class MatchBalancer
         // 전체 대기 시간에 따라 가중치에서 10초까지 10%, 30초까지 20%, 그외 30% 적용
         double processWaitWeight = averageMatchTime switch
         {
-            > 10 and <= 30 => (double)(WAIT_TIME_WEIGHT * 0.1), // 100
-            > 30 and <= 60 => (double)(WAIT_TIME_WEIGHT * 0.2), // 200
-            _ => (double)(WAIT_TIME_WEIGHT * 0.25),             // 250
+            > 10 and <= 30 => (double)(WaitTimeWeight * 0.1), // 100
+            > 30 and <= 60 => (double)(WaitTimeWeight * 0.2), // 200
+            _ => (double)(WaitTimeWeight * 0.25),             // 250
         };
 
         // 사용자 대기 시간에 따라 가중치 5초까지 20%, 15초까지 30%, 30초까지 40%, 그외 50% 적용
         double waitTimeWeight = waitTime switch
         {
-            > 05 and <= 15 => (double)(WAIT_TIME_WEIGHT * 0.1), // 100
-            > 15 and <= 30 => (double)(WAIT_TIME_WEIGHT * 0.2), // 200
-            > 30 and <= 40 => (double)(WAIT_TIME_WEIGHT * 0.3), // 300
-            _ => (double)(WAIT_TIME_WEIGHT * 0.4),              // 400
+            > 05 and <= 15 => (double)(WaitTimeWeight * 0.1), // 100
+            > 15 and <= 30 => (double)(WaitTimeWeight * 0.2), // 200
+            > 30 and <= 40 => (double)(WaitTimeWeight * 0.3), // 300
+            _ => (double)(WaitTimeWeight * 0.4),              // 400
         };
 
         return (int)(processWaitWeight + waitTimeWeight);

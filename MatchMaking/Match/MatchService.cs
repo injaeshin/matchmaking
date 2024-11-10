@@ -9,9 +9,6 @@ public delegate void OnMatchFailure(MatchMode mode, MatchQueueItem user);
 
 public class MatchService
 {
-    private const int _tryMaxCount = 3;
-    private const int _queueBatchSize = 10;
-
     private readonly int _maxCount;
     private readonly RedisService _redisService;
     private readonly MatchBalancer _matchBalancer;
@@ -21,7 +18,6 @@ public class MatchService
     public event OnMatchSuccess? OnMatchSuccessEvent;
     public event OnMatchFailure? OnMatchFailureEvent;
     
-
     public MatchMode MatchMode { get; }
 
     public MatchService(RedisService redis, MatchBalancer balancer, MatchMode mode)
@@ -35,14 +31,14 @@ public class MatchService
         _pubQueueDecreaseAction = _redisService.RedisMessage.PubDecreaseMatchQueue;
     }
 
-    public async Task<bool> MatchProcess()
+    public async Task<bool> MatchWorker()
     {
         if (await _redisService.IsEmptyMatchQueueAsync(MatchMode))
         {
             return false;
         }
 
-        var user = await GetUserQueueAsync();
+        var user = await GetUserFromQueueAsync();
         if (user is null)
         {
             return false;
@@ -55,32 +51,51 @@ public class MatchService
         }
 
         Dictionary<int, MatchQueueItem> targets = new();
-        if (!await TryGetUserMatchAsync(user, targets))
+        if (!await TryFindUserFromScoreAsync(user, targets))
         {
             return false;
         }
 
-        SetMatchedUserAsync(targets);
+        await AssignMatchedUserAsync(targets);
+
+        _pubQueueDecreaseAction(MatchMode, targets.Count);
 
         return true;
     }
 
-    private void SetMatchedUserAsync(Dictionary<int, MatchQueueItem> targets)
+    private async Task AssignMatchedUserAsync(Dictionary<int, MatchQueueItem> targets)
     {
+        await _redisService.RemoveMatchUserAsync(MatchMode, targets.Values);
+
         foreach (var tg in targets.Values)
         {
-            if (!_lock.Unlock(tg.Id))
-            {
-                throw new InvalidOperationException("Failed to remove lock user");
-            }
-
+            _lock.Unlock(tg.Id);
             _matchBalancer.AddMatchTime(tg.WaitTime);
         }
 
         OnMatchSuccessEvent?.Invoke(MatchMode, targets);
+        
     }
 
-    private async Task<int> SelectUnlockUserAsync(List<MatchQueueItem> candidates, Dictionary<int, MatchQueueItem> targets)
+    private async Task<bool> TryLockAndRemoveQueueAsync(int id)
+    {
+        if (!_lock.TryLock(id))
+        {
+            return false;
+        }
+
+        if (!await _redisService.RemoveQueueAndScoreAsync(MatchMode, id))
+        {
+            Console.WriteLine($"Failed to remove queue and score: {id}");
+            
+            _lock.Unlock(id);
+            return false;
+        }
+
+        return true;
+    }
+
+    private async Task<int> SelectUserAsync(List<MatchQueueItem> candidates, Dictionary<int, MatchQueueItem> targets)
     {
         foreach (var tg in candidates)
         {
@@ -89,20 +104,14 @@ public class MatchService
                 continue;
             }
 
-            if (!_lock.TryLock(tg.Id))
+            if (!await TryLockAndRemoveQueueAsync(tg.Id))
             {
                 continue;
             }
 
-            var matchQueueScore = await _redisService.GetUserScoreMatchQueueAsync(MatchMode, tg.Id);
-            if (matchQueueScore == 0)
-            {
-                throw new Exception($"Invalid Match Queue Score: {tg.Id}");
-            }
+            (_, long score) = await _redisService.GetMatchUserAsync(MatchMode, tg.Id);
+            tg.SetScore(score);
 
-            await _redisService.RemoveQueueAndScoreAsync(MatchMode, tg.Id);
-
-            tg.SetDecodeScore(matchQueueScore);
             targets.Add(tg.Id, tg);
         }
 
@@ -116,7 +125,7 @@ public class MatchService
             throw new Exception($"Invalid MMR: {user.Id} - {user.MMR}");
         }
 
-        if (user.WaitTime > MatchBalancer.MatchWaitTimeout)
+        if (user.WaitTime > Constant.WaitTimeout)
         {
             if (!_lock.Unlock(user.Id))
             {
@@ -129,7 +138,36 @@ public class MatchService
         return true;
     }
 
-    private async Task<bool> TryGetUserMatchAsync(MatchQueueItem user, Dictionary<int, MatchQueueItem> targets)
+    private async Task<MatchQueueItem?> GetUserFromQueueAsync()
+    {
+        int begin = 0;
+        int tryCount = 1;
+        int batchSize = Constant.FindQueueBatchSize;
+
+        do
+        {
+            var candidates = await _redisService.GetUserMatchQueueAsync(MatchMode, begin, begin + batchSize - 1);
+            if (candidates is null || candidates.Count == 0)
+            {
+                begin += batchSize;
+                continue;
+            }
+
+            foreach (var user in candidates)
+            {
+                if (await TryLockAndRemoveQueueAsync(user.Id))
+                {                    
+                    return user;
+                }
+            }
+
+            begin += batchSize;
+        } while (++tryCount < Constant.FindMatchRetryCount);
+
+        return null;
+    }
+
+    private async Task<bool> TryFindUserFromScoreAsync(MatchQueueItem user, Dictionary<int, MatchQueueItem> targets)
     {
         var tryCount = 1;
         var adjustMMR = _matchBalancer.GetAdjustMMR(user.WaitTime);
@@ -140,17 +178,17 @@ public class MatchService
             var maxScore = Math.Min(9999, (user.MMR + adjustMMR) * tryCount);
 
             var count = _maxCount - targets.Count - 1;
-            var candidates = await _redisService.GetMatchCandidatesAsync(MatchMode, minScore, maxScore, count);
+            var candidates = await _redisService.GetUserMatchScoreAsync(MatchMode, minScore, maxScore, count);
             if (candidates is null || candidates.Count == 0)
             {
-                break;
+                continue;
             }
 
-            if (await SelectUnlockUserAsync(candidates, targets) == _maxCount -1)
+            if (await SelectUserAsync(candidates, targets) == _maxCount - 1)
             {
                 break;
             }
-        } while (++tryCount < _tryMaxCount);
+        } while (++tryCount < Constant.FindMatchRetryCount);
 
         targets.Add(user.Id, user);
 
@@ -166,47 +204,10 @@ public class MatchService
                 }
             }
 
-            targets.Clear();
             return false;
         }
 
         return targets.Count == _maxCount;
-    }
-
-    public async Task<MatchQueueItem?> GetUserQueueAsync()
-    {
-        int begin = 0;
-        int retryCount = _tryMaxCount;
-
-        do
-        {
-            var candidates = await _redisService.GetUserMatchQueueAsync(MatchMode, begin, begin + _queueBatchSize - 1);
-            if (candidates is null || candidates.Count == 0)
-            {
-                return null;
-            }
-
-            foreach (var candidate in candidates)
-            {
-                var id = (int)candidate.Id;
-
-                if (!_lock.TryLock(id))
-                {
-                    continue;
-                }
-
-                if (!await _redisService.RemoveQueueAndScoreAsync(MatchMode, id))
-                {
-                    Console.WriteLine($"Failed to remove queue and score: {id}");
-                }
-
-                return new MatchQueueItem(id, 0, (long)candidate.Score);
-            }
-
-            begin += _queueBatchSize;
-        } while (--retryCount > 0);
-
-        return null;
     }
 }
 

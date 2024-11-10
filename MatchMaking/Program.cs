@@ -11,29 +11,26 @@ public class Program
     {
         var mode = MatchMode.ThreeVsThree;
 
-        var redisService = new RedisService();
+        var redisService = new RedisService(RedisConnection.Connection);
         var matchManager = new MatchManager(redisService);
+
+        matchManager.Start();
 
         var random = new Random();
         var users = new List<MatchQueueItem>();
 
-        var tasks = Enumerable.Range(0, 1000).Select(i =>
+        var tasks = Enumerable.Range(1, 5000).Select(i =>
         {
             var mmr = random.Next(1, 100);
-            var user = new MatchQueueItem(i, mmr, 0);
-            users.Add(user);
+            users.Add(new MatchQueueItem(i).SetMMR(mmr));
             return Task.CompletedTask;
         });
         await Task.WhenAll(tasks);
-
-        //await redisService._AddQueueAndScoreAsync(MatchMode.ThreeVsThree, users);
 
         foreach (var u in users)
         {
             await matchManager.AddMatchQueueAsync(mode, u);
         }
-
-        matchManager.Start();
 
         Console.ReadKey();
     }
