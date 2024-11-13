@@ -1,7 +1,7 @@
 using MatchMaking.Common;
 using Constant = MatchMaking.Common.Constant;
 
-namespace MatchMakingTest;
+namespace MatchMaking.Tests;
 
 public enum TestTaskType
 {

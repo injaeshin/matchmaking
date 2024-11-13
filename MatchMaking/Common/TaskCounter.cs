@@ -17,11 +17,6 @@ public class TaskCounter<TEnum> : IDisposable where TEnum : Enum
     private readonly ConcurrentDictionary<TEnum, long> _lastTaskTime = new();
     private readonly ConcurrentDictionary<TEnum, ConcurrentQueue<TaskWithCancellation>> _tasks = new();
 
-    ~TaskCounter()
-    {
-        Dispose();
-    }
-
     public void Dispose()
     {
         Dispose(true);
